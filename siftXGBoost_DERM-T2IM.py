@@ -13,11 +13,22 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class SkinLesionClassifier:
+
+    #initalizes class with data path for dataset
+    #Sets up Label Encoder and assigns Benign and Malignant integers (0 or 1)
+
     def __init__(self, data_path="./DERM-T2IM/Dataset-6k"):
         self.data_path = Path(data_path)
         self.label_encoder = LabelEncoder()
         self.model = None
         self.classes = ['Benign', 'Malignant']
+
+    #Extracts SIFT features from images
+    #Reads and resizes images to 64x64
+    #Defines keypoints for SIFT descriptors in a circular radius
+    #Rotates images at specified angles
+    #Extracts SIFT features from each rotation and then concatenates them
+    #Returns combine SIFT descriptros, resized images, and keypoints
 
     def extract_sift_features(self, image_path, rotations=[0, 90, 180, 270]):
         img = cv2.imread(str(image_path))
@@ -50,6 +61,10 @@ class SkinLesionClassifier:
         combined_descriptors = np.hstack(descriptors_list)
         return combined_descriptors, img, keypoints
 
+    #Designed the generate the circular keypoints around the central point of the image
+    #Ensures all keypoints lie with specified boundaries
+    #Isolating keypoints gave slightly better results than a dense grid
+
     def fill_radius(self, center_x, center_y, radius, step_size, img):
         keypoints = []
         current_radius = 0
@@ -64,6 +79,8 @@ class SkinLesionClassifier:
             current_radius += step_size
         return keypoints
 
+    #Loads the image file paths and their corresponding labels, encoding them with LabelEncoder
+
     def load_data(self):
         image_paths = list(self.data_path.glob("**/*.png"))
         raw_labels = [path.parent.name for path in image_paths]
@@ -71,6 +88,11 @@ class SkinLesionClassifier:
         self.label_encoder.fit(self.classes)
         encoded_labels = self.label_encoder.transform(raw_labels)
         return image_paths, encoded_labels
+
+    #Extract SIFT features for all images in dataset and associates them with their labels
+    #Used ThreadPoolExecutor for parallel processing which GREATLY improved processing time
+    #Filters out invalid or failed extractions
+    #Returns a NumPy array of features, labels, and valid image paths
 
     def extract_features_and_labels(self):
         image_paths, labels = self.load_data()
@@ -103,17 +125,31 @@ class SkinLesionClassifier:
         valid_labels = labels[valid_indices]
         return np.array(features), np.array(valid_labels), valid_paths
 
+    #Trains an XGBoost classifier using extracted features
+    #Configures model with hyperparameters; Paramters were chosen from hyperparameter testing
+        #Accidentally deleted code after commenting it out
+    #Reports total training time
+
     def train_model(self, X_train, y_train, X_test, y_test):
         start_time = time.time()
         self.model = xgb.XGBClassifier(
+            #Logloss evaluates how close predicted probabilities are to true labels
             eval_metric="logloss",
+            #Sets a seed for random number generation to ensure reproducibility of results
             random_state=42,
+            #L2 Regularization on weights (Ridge regression), helps prevent overfitting by penalizing large weights
             reg_lambda=1.0,
+            #L1 regularization on weights (Lasso regression), encourages sparsity: fewer features with non-zero weights
             reg_alpha=0.5,
+            #How many trees built or boosting rounds; higher is better performance, but risks overfitting
             n_estimators=100,
+            #Limits how many splits each tree can make; shallower trees reduces overfit
             max_depth=3,
+            #Limits each tree to using 80% of features
             colsample_bytree=0.8,
+            #Each boosting iteration will use 80% of training data; helps overfitting by adding randomness
             subsample=0.8,
+            #Stops training if validation set does not improve for 50 consecutive rounds; reduces unnecessary computation and reduces overfitting
             early_stopping_rounds=50
         )
 
@@ -125,6 +161,13 @@ class SkinLesionClassifier:
         )
         end_time = time.time()
         print(f"\nTotal time taken to train: {end_time - start_time:.2f} seconds")
+
+    #Evaluates the trained model on the test-set
+    #Makes predictions and calculates probabilities
+    #Displays classification report
+    #Computes and visualizes the confusuion Matrix and Receiver Operating Characteristic (ROC) curve
+    #Displays correctly and incorrectly classified images (10 Benign, 10 Malignant correctly/incorrectly)
+
 
     def evaluate_model(self, X_test, y_test, test_paths):
         predictions = self.model.predict(X_test)
@@ -144,6 +187,9 @@ class SkinLesionClassifier:
             print(f"Error calculating ROC AUC: {str(e)}")
 
         self.visualize_predictions(y_test, predictions, test_paths)
+
+    #Generates the confusion matrix and ROC Curve and puts them on the same image
+    #Gives a calculated ROC AUC score
 
     def visualize_confusion_matrix_and_roc_curve(self, conf_matrix, y_true, y_scores, roc_auc):
         fpr, tpr, _ = roc_curve(y_true, y_scores)
@@ -184,6 +230,8 @@ class SkinLesionClassifier:
 
         plt.tight_layout()
         plt.show()
+
+    #Generates the correctly/incorrectly identified images (10 correct and 10 incorrect for both)
 
 
     def visualize_predictions(self, y_test, predictions, test_paths):
@@ -283,6 +331,8 @@ class SkinLesionClassifier:
         #     plt.tight_layout()
         #     plt.show()
 
+#Entry point that runs pipeline
+#Test size is 20% of dataset (80% for training)
 
 def main():
     classifier = SkinLesionClassifier()
